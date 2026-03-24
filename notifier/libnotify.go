@@ -20,6 +20,7 @@ func SetupLibnotifyNotifier(notifiers *sync.Map) {
 		AppIcon: "yubikey-touch-detector",
 		Summary: "YubiKey is waiting for a touch",
 	}
+	notification.AddHint(notify.Hint{ID: "transient", Variant: dbus.MakeVariant(true)})
 
 	conn, notifier, err := connectDBus(&notification.ReplacesID)
 	if err != nil {
