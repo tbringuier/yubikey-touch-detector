@@ -1,179 +1,192 @@
-# YubiKey touch detector
+# yubikey-touch-detector
 
-This is a tool that can detect when YubiKey is waiting for your touch. It is designed to be integrated with other UI components to display a visible indicator.
+A background service that detects when your YubiKey is waiting for a touch and notifies you via a **system-tray icon** (blinking on KDE Plasma, requires AppIndicator extension on GNOME) and/or **desktop notifications** (libnotify).
 
-For example, an integration with [i3wm](https://i3wm.org/) and [py3status](https://github.com/ultrabug/py3status) looks like this:
+This is a fork of [maximbaz/yubikey-touch-detector](https://github.com/maximbaz/yubikey-touch-detector) focused on **atomic Linux desktops** (Fedora Atomic and derivatives).
 
-![demo](https://user-images.githubusercontent.com/1177900/46533233-2bcf5580-c8a4-11e8-99e7-1418e89615f5.gif)
+---
 
-_See also: [Wiki: Which UI components are already integrated with this app?](https://github.com/maximbaz/yubikey-touch-detector/wiki)_
+## Requirements
 
-## Installation
+| Requirement | Purpose |
+|---|---|
+| `libnotify` / `notify-send` | Desktop popup notifications |
+| `ykman` *(optional)* | Detects 15-second touch-cache policy for hourglass icon |
+| udev rule for `/dev/hidraw*` | U2F/FIDO2 touch detection (see below) |
 
-**This tool only works on Linux**. If you want to help implementing (at least partial) support for other OS, pull requests are very welcome!
+### U2F / FIDO2 access
 
-On Arch Linux, you can install it with `pacman -S yubikey-touch-detector`
+On systems without automatic device access, add a udev rule:
 
-The package also installs a systemd service and socket. If you want the app to launch on startup, just enable the service like so:
-
-```
-$ systemctl --user daemon-reload
-$ systemctl --user enable --now yubikey-touch-detector.service
-```
-
-If you want the service to be started only when there is a listener on Unix socket, enable the socket instead like so:
-
-```
-$ systemctl --user daemon-reload
-$ systemctl --user enable --now yubikey-touch-detector.socket
+```bash
+echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1050", TAG+="uaccess"' \
+    | sudo tee /etc/udev/rules.d/70-yubikey.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-Alternatively you can download the latest release from the [GitHub releases](https://github.com/maximbaz/yubikey-touch-detector/releases) page. All releases are signed with [my PGP key](https://keybase.io/maximbaz).
+Re-plug your YubiKey afterwards.
 
-Finally you can install the app with `go`:
+### GNOME — AppIndicator extension
 
-### Prequisites for building locally
+The tray icon requires the **AppIndicator and KStatusNotifierItem Support** extension. On KDE Plasma no extra setup is needed.
 
-- gpgme
+---
 
-```
-sudo apt install libgpgme-dev
-```
+## Install (Fedora Atomic)
 
-- For Go <1.17
+The `install.sh` script builds the binary inside a `toolbox` container — no packages need to be layered on the host image.
 
-```
-$ go get -u github.com/maximbaz/yubikey-touch-detector
-```
-
-- For [Go >1.17](https://go.dev/doc/go-get-install-deprecation):
-
-```
-$ go install github.com/maximbaz/yubikey-touch-detector@latest
+```bash
+git clone https://github.com/tbringuier/yubikey-touch-detector
+cd yubikey-touch-detector
+./install.sh
 ```
 
-This places the binary in your `$GOPATH/bin` folder, as well as the sources in `$GOPATH/src` for you to use the detection functions in your own code.
+The script will:
 
-## Usage
+1. Build the binary inside a `toolbox` container (`toolbox` is pre-installed on Fedora Atomic)
+2. Install the binary to `~/.local/bin/`
+3. Install systemd user units to `~/.config/systemd/user/`
+4. Write a default config to `~/.config/yubikey-touch-detector/service.conf`
+5. Enable and start the service immediately
+6. On subsequent runs, restart the service only if the binary changed
 
-#### Command line
+### Uninstall
 
-To test how the app works, run it in verbose mode to print every event on STDERR:
-
-```
-$ yubikey-touch-detector -v
-```
-
-Now try different commands that require a physical touch and see if the app can successfully detect them.
-
-#### Desktop notifications
-
-You can make the app show desktop notifications using `libnotify` if you run it with corresponding flag:
-
-```
-$ yubikey-touch-detector --libnotify
+```bash
+./install.sh --uninstall
 ```
 
-#### Configuring the app
+Your config in `~/.config/yubikey-touch-detector/` is kept — remove it manually if desired:
 
-The app supports the following environment variables and CLI arguments (CLI args take precedence):
-
-| Environment var                    | CLI arg       |
-| ---------------------------------- | ------------- |
-| `YUBIKEY_TOUCH_DETECTOR_VERBOSE`   | `-v`          |
-| `YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY` | `--libnotify` |
-| `YUBIKEY_TOUCH_DETECTOR_STDOUT`    | `--stdout`    |
-| `YUBIKEY_TOUCH_DETECTOR_NOSOCKET`  | `--no-socket` |
-| `YUBIKEY_TOUCH_DETECTOR_DBUS`      | `--dbus`      |
-
-You can configure the systemd service by defining any of these environment variables in `$XDG_CONFIG_HOME/yubikey-touch-detector/service.conf` - see `service.conf.example` for a configuration example.
-
-#### Integrating with other UI components
-
-First of all, make sure the app is always running (e.g. start a provided systemd user service or socket).
-
-Next, in order to integrate the app with other UI components to display a visible indicator, use any of the available notifiers in the `notifier` subpackage.
-
-##### notifier/unix_socket
-
-`unix_socket` notifier allows anyone to connect to the socket `$XDG_RUNTIME_DIR/yubikey-touch-detector.socket` and receive the following events:
-
-| event   | description                                         |
-| ------- | --------------------------------------------------- |
-| `GPG_1` | when a `gpg` operation started waiting for a touch  |
-| `GPG_0` | when a `gpg` operation stopped waiting for a touch  |
-| `U2F_1` | when a `u2f` operation started waiting for a touch  |
-| `U2F_0` | when a `u2f` operation stopped waiting for a touch  |
-| `MAC_1` | when a `hmac` operation started waiting for a touch |
-| `MAC_0` | when a `hmac` operation stopped waiting for a touch |
-
-All messages have a fixed length of 5 bytes to simplify the code on the receiving side.
-
-##### notifier/dbus
-
-`dbus` notifier registers a dbus server at the interface name `com.github.maximbaz.YubikeyTouchDetector` and path `/com/github/maximbaz/YubikeyTouchDetector`.
-
-Properties on this dbus interface are discoverable through introspection. Properties also emit PropertiesChanged signals to indicate updates and support gobject binding.
-
-## How it works
-
-Your YubiKey may require a physical touch to confirm these operations:
-
-- `sudo` request (via `pam-u2f`)
-- [WebAuthn](https://webauthn.io/)
-- `gpg --sign`
-- `gpg --decrypt`
-- `ssh` to a remote host (and related operations, such as `scp`, `rsync`, etc.)
-- `ssh` on a remote host to a different remote host (via forwarded `ssh-agent`)
-- `HMAC` operations
-
-_See also: [FAQ: How do I configure my YubiKey to require a physical touch?](#faq-configure-yubikey-require-touch)_
-
-### Detecting u2f operations
-
-In order to detect whether a U2F/FIDO2 operation requests a touch on YubiKey, the app is listening on the appropriate `/dev/hidraw*` device for corresponding messages as per FIDO spec.
-
-See `detector/u2f.go` for more info on implementation details, the source code is documented and contains relevant links to the spec.
-
-### Detecting gpg operations
-
-This detection is based on a "busy check" - when the card is busy (i.e. `gpg --card-status` hangs), it is assumed that it is waiting on a touch. This of course leads to false positives, when the card is busy for other reasons, but it is a good guess anyway.
-
-In order to not run the `gpg --card-status` indefinitely (which leads to YubiKey be constantly blinking), the check is being performed only after any shadowed private key files inside `$GNUPGHOME/private-keys-v1.d/*` are opened (the app is thus watching for `OPEN` events on those files).
-
-> If the path to your `private-keys-v1.d` folder differs, define `$GNUPGHOME` environment variable, globally or in `$XDG_CONFIG_HOME/yubikey-touch-detector/service.conf`.
-
-Since v1.11.0 we started using `gpgme` to perform some operations above:
-
-- we are now using Assuan protocol to query card status, instead of spawning `gpg --card-status` processes.
-- we are now querying path to `$GNUPGHOME` from `gpgme`.
-
-### Detecting ssh operations
-
-The requests performed on a local host will be captured by the `gpg` detector. However, in order to detect the use of forwarded `ssh-agent` on a remote host, an additional detector was introduced.
-
-This detector runs as a proxy on the `$SSH_AUTH_SOCK`, it listens to all communications with that socket and starts a `gpg --card-status` check in case an event was captured.
-
-### Detecting HMAC operations
-
-This detection is based on the observation that a certain `/dev/hidraw*` device will disappear when YubiKey will start waiting for a HMAC, and reappear when it stops waiting for a touch.
-
-## FAQ
-
-<a name="faq-configure-yubikey-require-touch"></a>
-
-#### How do I configure my YubiKey to require a physical touch?
-
-For `sudo` requests with `pam-u2f`, please refer to the documentation on [Yubico/pam-u2f](https://github.com/Yubico/pam-u2f) and online guides (e.g. [official one](https://support.yubico.com/support/solutions/articles/15000011356-ubuntu-linux-login-guide-u2f)).
-
-For `gpg` and `ssh` operations, install [ykman](https://github.com/Yubico/yubikey-manager) and use the following commands:
-
-```
-$ ykman openpgp keys set-touch sig on   # For sign operations
-$ ykman openpgp keys set-touch enc on   # For decrypt operations
-$ ykman openpgp keys set-touch aut on   # For ssh operations
+```bash
+rm -rf ~/.config/yubikey-touch-detector
 ```
 
-If you are going to frequently use OpenPGP operations, `cached` or `cached-fixed` may be better for you. See more details [here](https://github.com/drduh/YubiKey-Guide#require-touch).
+---
 
-Make sure to unplug and plug back in your YubiKey after changing any of the options above.
+## Install from binary (any systemd Linux desktop)
+
+<details>
+<summary>Expand for manual install instructions</summary>
+Download the binary for your architecture from [Releases](../../releases) artifacts, then:
+
+```bash
+# 1. Install the binary
+sudo install -Dm755 yubikey-touch-detector-linux-amd64 /usr/local/bin/yubikey-touch-detector
+# (use yubikey-touch-detector-linux-arm64 on ARM systems)
+
+# 2. Create config directory and write a minimal config
+sudo mkdir -p /etc/yubikey-touch-detector
+# Or per-user:
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/yubikey-touch-detector"
+cat > "${XDG_CONFIG_HOME:-$HOME/.config}/yubikey-touch-detector/service.conf" <<'EOF'
+YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY=true
+YUBIKEY_TOUCH_DETECTOR_TRAY=true
+EOF
+
+# 3. Install systemd user units
+SYSTEMD_DIR="${HOME}/.config/systemd/user"
+mkdir -p "$SYSTEMD_DIR"
+
+cat > "$SYSTEMD_DIR/yubikey-touch-detector.service" <<'EOF'
+[Unit]
+Description=Detects when your YubiKey is waiting for a touch
+Requires=yubikey-touch-detector.socket
+
+[Service]
+ExecStart=/usr/local/bin/yubikey-touch-detector
+EnvironmentFile=-%E/yubikey-touch-detector/service.conf
+
+[Install]
+Also=yubikey-touch-detector.socket
+WantedBy=default.target
+EOF
+
+cat > "$SYSTEMD_DIR/yubikey-touch-detector.socket" <<'EOF'
+[Unit]
+Description=Unix socket activation for YubiKey touch detector service
+
+[Socket]
+ListenStream=%t/yubikey-touch-detector.socket
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
+EOF
+
+# 4. Enable and start
+systemctl --user daemon-reload
+systemctl --user enable --now yubikey-touch-detector.service
+```
+
+**GNOME:** install the AppIndicator extension before starting the service:
+```bash
+# Fedora / RPM-based
+sudo dnf install gnome-shell-extension-appindicator
+# Debian / Ubuntu
+sudo apt install gnome-shell-extension-appindicator
+# Or from https://extensions.gnome.org/extension/615/appindicator-support/
+```
+
+Verify the service is running:
+```bash
+systemctl --user status yubikey-touch-detector.service
+journalctl --user -u yubikey-touch-detector.service -f
+```
+
+</details>
+
+---
+
+## Configuration
+
+Edit `~/.config/yubikey-touch-detector/service.conf` then restart the service:
+
+```bash
+systemctl --user restart yubikey-touch-detector.service
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `YUBIKEY_TOUCH_DETECTOR_VERBOSE` | `false` | Enable debug logging |
+| `YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY` | `true` | Desktop popup (critical urgency, stays until touch) |
+| `YUBIKEY_TOUCH_DETECTOR_TRAY` | `true` | System-tray icon (blinks on touch) |
+| `YUBIKEY_TOUCH_DETECTOR_STDOUT` | `false` | Print events to stdout |
+| `YUBIKEY_TOUCH_DETECTOR_NOSOCKET` | `false` | Disable Unix socket notifier |
+| `YUBIKEY_TOUCH_DETECTOR_DBUS` | `false` | Enable D-Bus IPC server |
+
+See [`service.conf.example`](service.conf.example) for detailed explanations of each option.
+
+---
+
+## Troubleshooting
+
+**Service not starting:**
+```bash
+journalctl --user -u yubikey-touch-detector.service -b
+```
+
+**No notification on touch:**
+```bash
+yubikey-touch-detector --libnotify --tray -v
+# then trigger a gpg/ssh operation and watch the output
+```
+
+**Binary not found:**
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+```
+
+---
+
+## License
+
+MIT — same as upstream.
+
+---
+
+> Fork of [github.com/maximbaz/yubikey-touch-detector](https://github.com/maximbaz/yubikey-touch-detector)
+> — Original work by Maxim Baz and contributors.
+> This fork have been vibecoded using Claude for personal purposes.

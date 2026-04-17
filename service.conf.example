@@ -1,11 +1,112 @@
-# enable debug logging
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║           yubikey-touch-detector — service configuration                   ║
+# ║                                                                              ║
+# ║  Copy this file to:                                                          ║
+# ║    ~/.config/yubikey-touch-detector/service.conf                            ║
+# ║                                                                              ║
+# ║  After editing, restart the service:                                         ║
+# ║    systemctl --user restart yubikey-touch-detector.service                  ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+# ── Debug logging ─────────────────────────────────────────────────────────────
+#
+# When enabled, the service prints every internal event (USB presence changes,
+# inotify file opens, Assuan LEARN probe results, D-Bus property updates…) to
+# the systemd journal at DEBUG level.
+#
+# Useful for troubleshooting when a notification does not appear:
+#   journalctl --user -u yubikey-touch-detector.service -f
+#
+# Leave this false in normal use — it produces a lot of output.
+#
 YUBIKEY_TOUCH_DETECTOR_VERBOSE=false
 
-# show desktop notifications using libnotify
+
+# ── Desktop notifications via libnotify ───────────────────────────────────────
+#
+# When enabled, a popup notification appears whenever your YubiKey is waiting
+# for a physical touch (GPG sign/decrypt/auth, SSH, U2F, HMAC).
+#
+# The notification is sent with CRITICAL urgency, meaning:
+#   • KDE Plasma  → persistent popup in the corner, does not auto-dismiss
+#   • GNOME       → persistent banner at the top of the screen
+#
+# The notification disappears automatically once you touch the key (or the
+# operation times out).
+#
+# Requires: notify-send / libnotify to be installed on the host.
+# On Fedora Atomic this is available by default.
+#
 YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY=true
 
-# do not print notifications to stdout
+
+# ── System tray icon (StatusNotifierItem / SNI) ───────────────────────────────
+#
+# When enabled, a persistent icon is always visible in the system tray.
+# The icon changes state to reflect what the YubiKey is doing:
+#
+#   🔒 amber  (security-medium)   — YubiKey not plugged in
+#   🔒 green  (security-high)     — YubiKey connected and idle
+#   🔴 red blinking               — YubiKey is waiting for a touch
+#                                   (KDE blinks automatically on NeedsAttention)
+#   🕐 clock  (appointment-soon)  — Touch was just performed and is cached
+#                                   (shown for 15 s when ykman reports "Cached" policy)
+#
+# Desktop compatibility:
+#   • KDE Plasma (Bazzite)  → works out of the box, no setup required
+#   • GNOME (Aurora)        → requires the "AppIndicator and KStatusNotifierItem
+#                             Support" extension; install.sh handles this
+#
+# If the tray icon is missing at login (service starts before the taskbar is
+# ready), the service automatically retries registration for up to 2 minutes.
+#
+YUBIKEY_TOUCH_DETECTOR_TRAY=true
+
+
+# ── Print events to stdout ────────────────────────────────────────────────────
+#
+# When enabled, touch events are printed as plain text lines on stdout, which
+# ends up in the systemd journal:
+#   journalctl --user -u yubikey-touch-detector.service -f
+#
+# Primarily useful for scripting or piping into external tools. Not needed for
+# normal desktop use (libnotify and the tray icon are more user-friendly).
+#
+# Each line is exactly 5 bytes:  GPG_1  GPG_0  U2F_1  U2F_0  MAC_1  MAC_0
+#   *_1 = waiting for touch started
+#   *_0 = waiting for touch ended
+#
 YUBIKEY_TOUCH_DETECTOR_STDOUT=false
 
-# disable Un*x socket notifier
+
+# ── Unix socket notifier ──────────────────────────────────────────────────────
+#
+# The service exposes a Unix socket at:
+#   $XDG_RUNTIME_DIR/yubikey-touch-detector.socket  (e.g. /run/user/1000/…)
+#
+# Any process can connect to this socket and receive the same 5-byte event
+# messages as stdout (GPG_1, GPG_0, U2F_1, …). This is the integration point
+# for status bars, custom scripts, and panel widgets.
+#
+# Set to true to DISABLE the socket (the variable name is "NOSOCKET").
+# Leave false to keep the socket active — it has no overhead when nothing is
+# connected to it.
+#
 YUBIKEY_TOUCH_DETECTOR_NOSOCKET=false
+
+
+# ── D-Bus IPC server ──────────────────────────────────────────────────────────
+#
+# When enabled, the service registers a D-Bus interface on the session bus:
+#   Interface : com.github.maximbaz.YubikeyTouchDetector
+#   Path      : /com/github/maximbaz/YubikeyTouchDetector
+#
+# The interface exposes boolean properties (GPG, U2F, HMAC) that reflect the
+# current touch-wait state, and emits PropertiesChanged signals on every change.
+# This allows GObject/GLib applications and panel applets to bind directly to
+# the state without polling.
+#
+# Useful for advanced integrations; not needed for standard desktop use.
+#
+YUBIKEY_TOUCH_DETECTOR_DBUS=false
