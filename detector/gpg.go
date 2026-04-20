@@ -144,11 +144,16 @@ func CheckGPGOnRequest(requestGPGCheck chan bool, notifiers *sync.Map, ctx *gpgm
 				}
 				return
 			}
+			// Identify the calling application before firing GPG_ON so that
+			// the notification can name it (e.g. "github-desktop" for background
+			// repository refreshes or "pass" for password-manager operations).
+			notifier.SetCallerName("GPG", findCallerForGPG())
 			sendToAll(notifier.GPG_ON)
 			err := <-done
 			if err != nil {
 				log.Errorf("Agent returned an error: %v", err)
 			}
+			notifier.ClearCallerName("GPG")
 			sendToAll(notifier.GPG_OFF)
 		}()
 

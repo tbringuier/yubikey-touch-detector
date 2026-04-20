@@ -1,6 +1,9 @@
 package notifier
 
 import (
+	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -16,10 +19,10 @@ func SetupLibnotifyNotifier(notifiers *sync.Map) {
 	notifiers.Store("notifier/libnotify", touch)
 
 	notification := notify.Notification{
-		AppName: "yubikey-touch-detector",
-		AppIcon: "dialog-error",
-		Summary: "⚠ YubiKey is waiting for a touch!",
-		Body: "<b>Touch your YubiKey now to proceed.</b>",
+		AppName:       "yubikey-touch-detector",
+		AppIcon:       "dialog-error",
+		Summary:       "⚠ YubiKey is waiting for a touch!",
+		Body:          "<b>Touch your YubiKey now to proceed.</b>",
 		ExpireTimeout: notify.ExpireTimeoutNever,
 	}
 	notification.SetUrgency(notify.UrgencyCritical)
@@ -33,17 +36,30 @@ func SetupLibnotifyNotifier(notifiers *sync.Map) {
 	defer conn.Close()
 	defer notifier.Close()
 
-	activeTouchWaits := 0
+	// activeSources tracks which touch sources are currently asserting a touch
+	// request. The map key is the source name ("GPG", "U2F", "HMAC").
+	activeSources := make(map[string]bool)
 
 	for {
 		value := <-touch
-		if value == GPG_ON || value == U2F_ON || value == HMAC_ON {
-			activeTouchWaits++
+
+		switch value {
+		case GPG_ON:
+			activeSources["GPG"] = true
+		case GPG_OFF:
+			delete(activeSources, "GPG")
+		case U2F_ON:
+			activeSources["U2F"] = true
+		case U2F_OFF:
+			delete(activeSources, "U2F")
+		case HMAC_ON:
+			activeSources["HMAC"] = true
+		case HMAC_OFF:
+			delete(activeSources, "HMAC")
 		}
-		if value == GPG_OFF || value == U2F_OFF || value == HMAC_OFF {
-			activeTouchWaits--
-		}
-		if activeTouchWaits > 0 {
+
+		if len(activeSources) > 0 {
+			notification.Body = buildNotificationBody(activeSources)
 			id, err := notifier.SendNotification(notification)
 			if err != nil {
 				log.Error("Cannot show notification (will reconnect to DBUS): ", err)
@@ -73,6 +89,44 @@ func SetupLibnotifyNotifier(notifiers *sync.Map) {
 			}
 		}
 	}
+}
+
+// buildNotificationBody returns the HTML body for the notification.
+// When the calling application(s) can be identified, they are named explicitly
+// so the user knows which program is requesting the touch. For example:
+//
+//	"<b>git</b> is requesting your YubiKey touch."
+//	"<b>github-desktop, ssh</b> are requesting your YubiKey touch."
+//	"<b>Touch your YubiKey now to proceed.</b>" (fallback when caller is unknown)
+func buildNotificationBody(activeSources map[string]bool) string {
+	var callers []string
+	for src := range activeSources {
+		if name := GetCallerName(src); name != "" {
+			callers = append(callers, name)
+		}
+	}
+
+	if len(callers) == 0 {
+		return "<b>Touch your YubiKey now to proceed.</b>"
+	}
+
+	// Deduplicate and sort for a stable output when multiple sources are active
+	seen := make(map[string]bool, len(callers))
+	unique := callers[:0]
+	for _, c := range callers {
+		if !seen[c] {
+			seen[c] = true
+			unique = append(unique, c)
+		}
+	}
+	sort.Strings(unique)
+
+	verb := "is"
+	if len(unique) > 1 {
+		verb = "are"
+	}
+	return fmt.Sprintf("<b>%s</b> %s requesting your YubiKey touch.",
+		strings.Join(unique, ", "), verb)
 }
 
 func connectDBus(replacesID *uint32) (*dbus.Conn, notify.Notifier, error) {
