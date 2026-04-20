@@ -26,11 +26,11 @@ const (
 	sniStatusAttention = "NeedsAttention"
 
 	// Four visual states:
-	//   security-medium   = amber padlock  → YubiKey not plugged in
+	//   dialog-warning    = yellow warning → YubiKey not plugged in
 	//   security-high     = green padlock  → YubiKey connected and idle
 	//   security-low      = red padlock    → touch required (blinks as AttentionIconName)
 	//   appointment-soon  = clock          → touch cached (15s countdown after touch)
-	sniIconMissing = "security-medium"
+	sniIconMissing = "dialog-warning"
 	sniIconNormal  = "security-high"
 	sniIconAlert   = "security-low"
 	sniIconCached  = "appointment-soon"
@@ -48,6 +48,21 @@ const (
 	sniWatcherRetryDuration = 120 * time.Second
 	sniWatcherRetryInterval = 2 * time.Second
 )
+
+// sniIconPixmap is the D-Bus struct type "(iiay)" used in SNI icon pixmap arrays.
+type sniIconPixmap struct {
+	Width  int32
+	Height int32
+	Data   []byte
+}
+
+// sniToolTip is the D-Bus struct type "(sa(iiay)ss)" used in the SNI ToolTip property.
+type sniToolTip struct {
+	IconName string
+	Pixmaps  []sniIconPixmap
+	Title    string
+	Body     string
+}
 
 // sniServer holds the D-Bus methods required by the StatusNotifierItem interface.
 type sniServer struct{}
@@ -162,6 +177,13 @@ func SetupTrayNotifier(notifiers *sync.Map) {
 			"AttentionMovieName": {Value: "", Writable: false, Emit: prop.EmitFalse},
 			"ItemIsMenu":         {Value: false, Writable: false, Emit: prop.EmitFalse},
 			"WindowId":           {Value: int32(0), Writable: false, Emit: prop.EmitFalse},
+			"ToolTip": {Value: sniToolTip{
+				IconName: "",
+				Pixmaps:  []sniIconPixmap{},
+				Title:    "YubiKey Touch Detector",
+				Body:     "",
+			}, Writable: true, Emit: prop.EmitFalse},
+			"Menu": {Value: dbusMenuPath, Writable: false, Emit: prop.EmitFalse},
 		},
 	}
 
@@ -169,6 +191,10 @@ func SetupTrayNotifier(notifiers *sync.Map) {
 	if err != nil {
 		log.Error("Tray: cannot export SNI properties: ", err)
 		return
+	}
+
+	if _, err := setupDBusMenu(conn); err != nil {
+		log.Warn("Tray: cannot register context menu: ", err)
 	}
 
 	node := &introspect.Node{
@@ -238,6 +264,17 @@ func SetupTrayNotifier(notifiers *sync.Map) {
 		log.Debug("Tray: icon → ", icon)
 	}
 
+	setToolTip := func(title string) {
+		tt := sniToolTip{IconName: "", Pixmaps: []sniIconPixmap{}, Title: title, Body: ""}
+		if dbusErr := props.Set(sniIface, "ToolTip", dbus.MakeVariant(tt)); dbusErr != nil {
+			log.Warn("Tray: cannot update ToolTip: ", dbusErr)
+			return
+		}
+		if err := conn.Emit(sniPath, sniIface+".NewToolTip"); err != nil {
+			log.Warn("Tray: cannot emit NewToolTip: ", err)
+		}
+	}
+
 	// ykmanResultCh receives the result of checkYkmanCachedPolicy() each time
 	// the YubiKey is connected (non-blocking send: old results are dropped).
 	ykmanResultCh := make(chan bool, 1)
@@ -268,10 +305,12 @@ func SetupTrayNotifier(notifiers *sync.Map) {
 				activeTouchWaits = 0
 				setStatus(sniStatusActive)
 				setIcon(sniIconMissing)
+				setToolTip("YubiKey is missing!!")
 				log.Debug("Tray: YubiKey disconnected")
 			} else {
 				// YubiKey plugged in: switch to green idle icon and check touch policy.
 				setIcon(sniIconNormal)
+				setToolTip("YubiKey is detected")
 				log.Debug("Tray: YubiKey connected")
 				go func() {
 					// Give the device a moment to initialize before querying ykman.
