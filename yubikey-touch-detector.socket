@@ -1,9 +1,0 @@
-[Unit]
-Description=Unix socket activation for YubiKey touch detector service
-
-[Socket]
-ListenStream=%t/yubikey-touch-detector.socket
-RemoveOnStop=yes
-
-[Install]
-WantedBy=sockets.target
