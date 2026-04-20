@@ -299,6 +299,11 @@ func SetupTrayNotifier(notifiers *sync.Map) {
 			}
 
 		case value := <-touch:
+			// Track whether the touch that just completed was GPG-based.
+			// Only OpenPGP (and PIV) support a "Cached" touch policy on the YubiKey;
+			// FIDO/U2F does not cache touches, so the hourglass icon must not appear
+			// after a U2F or HMAC touch even when ykman reports Cached policy.
+			wasGPGOff := value == GPG_OFF
 			switch value {
 			case GPG_ON, U2F_ON, HMAC_ON:
 				activeTouchWaits++
@@ -320,8 +325,9 @@ func SetupTrayNotifier(notifiers *sync.Map) {
 				setStatus(sniStatusActive)
 				if !keyPresent {
 					setIcon(sniIconMissing)
-				} else if hasCachedPolicy {
-					// Show hourglass icon for 15 seconds to indicate the touch is cached.
+				} else if hasCachedPolicy && wasGPGOff {
+					// Show hourglass icon for 15 seconds to indicate the GPG touch is cached.
+					// Not shown for U2F/HMAC: FIDO does not implement touch caching.
 					setIcon(sniIconCached)
 					if cacheTimer != nil {
 						cacheTimer.Stop()
@@ -332,7 +338,7 @@ func SetupTrayNotifier(notifiers *sync.Map) {
 						default:
 						}
 					})
-					log.Debug("Tray: touch cached → hourglass for ", yubikeyTouchCacheDuration)
+					log.Debug("Tray: GPG touch cached → hourglass for ", yubikeyTouchCacheDuration)
 				} else {
 					setIcon(sniIconNormal)
 				}
