@@ -144,6 +144,7 @@ func runU2FWatcher(devicePath string, notifiers *sync.Map) {
 				u2fOffTimer.Stop()
 			}
 			if lastMessage != notifier.U2F_OFF {
+				notifier.ClearCallerName("U2F")
 				notifiers.Range(func(_, v interface{}) bool {
 					v.(chan notifier.Message) <- notifier.U2F_OFF
 					return true
@@ -170,6 +171,9 @@ func runU2FWatcher(devicePath string, notifiers *sync.Map) {
 		if isU2F || isFIDO2 {
 			// Signify U2F_ON if this is the first time we receive it
 			if lastMessage != notifier.U2F_ON {
+				// Identify which application has the FIDO2 device open so the
+				// notification can name it (e.g. "ssh" for GitHub Desktop git ops).
+				notifier.SetCallerName("U2F", findCallerByHidraw(devicePath))
 				notifiers.Range(func(_, v interface{}) bool {
 					v.(chan notifier.Message) <- notifier.U2F_ON
 					return true
@@ -184,6 +188,7 @@ func runU2FWatcher(devicePath string, notifiers *sync.Map) {
 		// Signify U2F_OFF if no new messages arrive soon
 		u2fOffTimer = time.AfterFunc(u2fOffTimerDuration, func() {
 			if lastMessage != notifier.U2F_OFF {
+				notifier.ClearCallerName("U2F")
 				notifiers.Range(func(_, v interface{}) bool {
 					v.(chan notifier.Message) <- notifier.U2F_OFF
 					return true
