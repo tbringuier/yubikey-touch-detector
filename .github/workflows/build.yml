@@ -28,13 +28,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: src/go.mod
           cache: true
 
       - name: Install C build dependencies
         run: sudo apt-get update && sudo apt-get install -y libgpgme-dev
 
       - name: Build binary
+        working-directory: src
         run: |
           CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} \
             go build -ldflags="-s -w -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
@@ -45,7 +46,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: yubikey-touch-detector-linux-${{ matrix.arch }}
-          path: yubikey-touch-detector-linux-${{ matrix.arch }}
+          path: src/yubikey-touch-detector-linux-${{ matrix.arch }}
           retention-days: 90
           if-no-files-found: error
 
@@ -53,4 +54,4 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v3
         with:
-          files: yubikey-touch-detector-linux-${{ matrix.arch }}
+          files: src/yubikey-touch-detector-linux-${{ matrix.arch }}

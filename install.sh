@@ -8,6 +8,7 @@ INSTALL_DIR="${HOME}/.local/bin"
 SYSTEMD_DIR="${HOME}/.config/systemd/user"
 CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/${BINARY_NAME}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_DIR="${REPO_DIR}/src"
 TOOLBOX_NAME="${BINARY_NAME}-build"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
@@ -45,6 +46,10 @@ if ! command -v toolbox &>/dev/null; then
     error "toolbox is required but not found.
 On Fedora Atomic systems (Aurora, Bazzite, Silverblue…) toolbox is pre-installed.
 If it is missing, install it with: rpm-ostree install toolbox"
+fi
+
+if [[ ! -d "${SOURCE_DIR}" ]]; then
+    error "Source directory not found: ${SOURCE_DIR}"
 fi
 
 mkdir -p "${INSTALL_DIR}" "${SYSTEMD_DIR}" "${CONFIG_DIR}"
@@ -88,7 +93,7 @@ info "Installing build dependencies and compiling..."
 toolbox run --container "${TOOLBOX_NAME}" bash -c "
     set -e
     sudo dnf install -y golang gpgme-devel git 2>/dev/null
-    cd '${REPO_DIR}'
+    cd '${SOURCE_DIR}'
     go build -o '/tmp/${BINARY_NAME}' .
     echo 'Build successful.'
 "
@@ -162,7 +167,7 @@ info "Systemd units written to ${SYSTEMD_DIR}/"
 heading "Writing default configuration"
 
 if [[ ! -f "${CONFIG_DIR}/service.conf" ]]; then
-    cp "${REPO_DIR}/service.conf.example" "${CONFIG_DIR}/service.conf"
+    cp "${SOURCE_DIR}/service.conf.example" "${CONFIG_DIR}/service.conf"
     info "Default config written to ${CONFIG_DIR}/service.conf"
 else
     info "Config already exists at ${CONFIG_DIR}/service.conf — skipping."

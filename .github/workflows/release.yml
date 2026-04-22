@@ -31,10 +31,11 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: src/go.mod
           cache: true
 
       - name: Build
+        working-directory: src
         run: |
           go build \
             -ldflags "-X main.version=${{ github.ref_name }}" \
@@ -44,7 +45,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: binary-${{ matrix.goarch }}
-          path: yubikey-touch-detector-linux-${{ matrix.goarch }}
+          path: src/yubikey-touch-detector-linux-${{ matrix.goarch }}
           if-no-files-found: error
 
   release:
