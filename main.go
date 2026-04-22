@@ -29,6 +29,7 @@ func main() {
 	envStdout := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_STDOUT"))]
 	envNosocket := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_NOSOCKET"))]
 	envDbus := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_DBUS"))]
+	envTray := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_TRAY"))]
 
 	var version bool
 	var verbose bool
@@ -36,6 +37,7 @@ func main() {
 	var stdout bool
 	var nosocket bool
 	var dbus bool
+	var tray bool
 
 	flag.BoolVar(&version, "version", false, "print version and exit")
 	flag.BoolVar(&verbose, "v", envVerbose, "enable debug logging")
@@ -43,6 +45,7 @@ func main() {
 	flag.BoolVar(&stdout, "stdout", envStdout, "print notifications to stdout")
 	flag.BoolVar(&nosocket, "no-socket", envNosocket, "disable unix socket notifier")
 	flag.BoolVar(&dbus, "dbus", envDbus, "enable dbus server for IPC")
+	flag.BoolVar(&tray, "tray", envTray, "show a persistent system-tray icon (StatusNotifierItem; blinks on touch)")
 	flag.Parse()
 
 	if version {
@@ -76,6 +79,9 @@ func main() {
 	}
 	if dbus {
 		go notifier.SetupDbusNotifier(notifiers)
+	}
+	if tray {
+		go notifier.SetupTrayNotifier(notifiers)
 	}
 
 	go detector.WatchU2F(notifiers)
@@ -119,6 +125,7 @@ func initGPGBasedDetectors(notifiers, exits *sync.Map) {
 	go detector.CheckGPGOnRequest(requestGPGCheck, notifiers, ctx)
 	go detector.WatchGPG(filesToWatch, requestGPGCheck)
 	go detector.WatchSSH(requestGPGCheck, exits)
+	go detector.WatchUSBForGPGCheck(requestGPGCheck)
 }
 
 func findShadowedPrivateKeys(folderPath string) ([]string, error) {

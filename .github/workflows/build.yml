@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+jobs:
+  build:
+    name: Build Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install C build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgpgme-dev
+
+      - name: Build binary
+        run: |
+          CGO_ENABLED=1 GOOS=linux GOARCH=${{ matrix.arch }} \
+            go build -ldflags="-s -w -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
+            -o yubikey-touch-detector-linux-${{ matrix.arch }} .
+
+      - name: Upload binary artifact
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v7
+        with:
+          name: yubikey-touch-detector-linux-${{ matrix.arch }}
+          path: yubikey-touch-detector-linux-${{ matrix.arch }}
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Attach binary to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: yubikey-touch-detector-linux-${{ matrix.arch }}

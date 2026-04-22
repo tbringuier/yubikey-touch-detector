@@ -17,10 +17,13 @@ func SetupLibnotifyNotifier(notifiers *sync.Map) {
 
 	notification := notify.Notification{
 		AppName: "yubikey-touch-detector",
-		AppIcon: "yubikey-touch-detector",
-		Summary: "YubiKey is waiting for a touch",
+		AppIcon: "dialog-error",
+		Summary: "⚠ YubiKey is waiting for a touch!",
+		Body: "<b>Touch your YubiKey now to proceed.</b>",
+		ExpireTimeout: notify.ExpireTimeoutNever,
 	}
-	notification.AddHint(notify.Hint{ID: "transient", Variant: dbus.MakeVariant(true)})
+	notification.SetUrgency(notify.UrgencyCritical)
+	notification.AddHint(notify.Hint{ID: "category", Variant: dbus.MakeVariant("device")})
 
 	conn, notifier, err := connectDBus(&notification.ReplacesID)
 	if err != nil {
