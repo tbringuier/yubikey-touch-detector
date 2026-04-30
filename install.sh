@@ -9,7 +9,25 @@ SYSTEMD_DIR="${HOME}/.config/systemd/user"
 CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/${BINARY_NAME}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="${REPO_DIR}/src"
-TOOLBOX_NAME="${BINARY_NAME}-build"
+
+detect_fedora_release() {
+    [[ -n "${FEDORA_RELEASE:-}" ]] && { echo "${FEDORA_RELEASE}"; return; }
+    [[ -r /etc/os-release ]] || return 1
+    local ID="" ID_LIKE="" VERSION_ID=""
+    . /etc/os-release
+    [[ "${ID}" == "fedora" || "${ID_LIKE}" == *fedora* ]] || return 1
+    [[ "${VERSION_ID}" =~ ^[0-9]+$ ]] || return 1
+    echo "${VERSION_ID}"
+}
+
+if ! FEDORA_RELEASE_DETECTED=$(detect_fedora_release); then
+    echo "Could not detect a Fedora release from /etc/os-release." >&2
+    echo "Set FEDORA_RELEASE explicitly, e.g. FEDORA_RELEASE=44 ./install.sh" >&2
+    exit 1
+fi
+
+DISTROBOX_IMAGE="registry.fedoraproject.org/fedora-toolbox:${FEDORA_RELEASE_DETECTED}"
+DISTROBOX_NAME="${BINARY_NAME}-build-$$"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
 info()    { echo -e "${GREEN}[INFO]${NC} $*"; }
@@ -42,10 +60,15 @@ if [[ "${EUID}" -eq 0 ]]; then
     error "Do not run this script as root."
 fi
 
-if ! command -v toolbox &>/dev/null; then
-    error "toolbox is required but not found.
-On Fedora Atomic systems (Aurora, Bazzite, Silverblue…) toolbox is pre-installed.
-If it is missing, install it with: rpm-ostree install toolbox"
+if ! command -v distrobox &>/dev/null; then
+    error "distrobox is required but not found.
+Install with: rpm-ostree install distrobox  (then reboot)
+or via Homebrew:  brew install distrobox"
+fi
+
+if ! command -v podman &>/dev/null && ! command -v docker &>/dev/null; then
+    error "distrobox needs podman (or docker) as a backend, but neither was found.
+On Fedora Atomic, podman is pre-installed — check your PATH."
 fi
 
 if [[ ! -d "${SOURCE_DIR}" ]]; then
@@ -81,24 +104,48 @@ if is_gnome; then
     esac
 fi
 
-# ── Build inside toolbox ─────────────────────────────────────────────────────
-heading "Building ${BINARY_NAME} inside toolbox '${TOOLBOX_NAME}'"
+# ── Build inside ephemeral distrobox (Fedora 44) ─────────────────────────────
+heading "Building ${BINARY_NAME} in ephemeral distrobox (${DISTROBOX_IMAGE})"
 
-if ! toolbox list --containers 2>/dev/null | grep -qw "${TOOLBOX_NAME}"; then
-    info "Creating toolbox container '${TOOLBOX_NAME}'..."
-    toolbox create --container "${TOOLBOX_NAME}"
-fi
+cleanup_distrobox() {
+    if distrobox list 2>/dev/null | awk '{print $3}' | grep -qw "${DISTROBOX_NAME}"; then
+        info "Removing ephemeral distrobox '${DISTROBOX_NAME}'..."
+        distrobox stop --yes "${DISTROBOX_NAME}" >/dev/null 2>&1 || true
+        distrobox rm   --force "${DISTROBOX_NAME}" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup_distrobox EXIT
+
+BUILD_OUT="$(mktemp -d -t "${BINARY_NAME}-build-XXXXXX")"
+BUILD_BINARY="${BUILD_OUT}/${BINARY_NAME}"
+
+info "Creating ephemeral distrobox '${DISTROBOX_NAME}'..."
+distrobox create \
+    --yes \
+    --name  "${DISTROBOX_NAME}" \
+    --image "${DISTROBOX_IMAGE}" \
+    --volume "${BUILD_OUT}:/build:rw" \
+    >/dev/null
 
 info "Installing build dependencies and compiling..."
-toolbox run --container "${TOOLBOX_NAME}" bash -c "
-    set -e
-    sudo dnf install -y golang gpgme-devel git 2>/dev/null
+distrobox enter --name "${DISTROBOX_NAME}" -- bash -c "
+    set -euo pipefail
+    sudo dnf install -y --setopt=install_weak_deps=False golang gpgme-devel git
     cd '${SOURCE_DIR}'
-    go build -o '/tmp/${BINARY_NAME}' .
+    go build -o '/build/${BINARY_NAME}' .
     echo 'Build successful.'
 "
 
-BUILD_BINARY="/tmp/${BINARY_NAME}"
+if [[ ! -x "${BUILD_BINARY}" ]]; then
+    error "Build artifact missing at ${BUILD_BINARY}"
+fi
+
+host_soname=$(ldconfig -p | awk '/libgpgme\.so\./{print $1; exit}')
+binary_soname=$(LANG=C objdump -p "${BUILD_BINARY}" 2>/dev/null | awk '/NEEDED.*libgpgme/{print $2; exit}')
+if [[ -n "${binary_soname}" && -n "${host_soname}" && "${binary_soname}" != "${host_soname}" ]]; then
+    warn "Built binary needs '${binary_soname}' but host provides '${host_soname}'."
+    warn "The runtime will fail to start. Check that DISTROBOX_IMAGE matches the host Fedora release."
+fi
 
 # ── Detect pre-existing state before touching anything ───────────────────────
 # Remember whether the service was running and whether the binary changed,
